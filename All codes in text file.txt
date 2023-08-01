@@ -1,0 +1,934 @@
+Face recognization code:
+
+
+from flask import Flask, request, render_template, Response
+import cv2, os
+from plyer import notification
+import numpy as np
+from PIL import Image 
+recognizer = cv2.face.LBPHFaceRecognizer_create()
+recognizer.read('C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/trainer.yml')   
+cascadePath = "haarcascade_frontalface_default.xml"
+faceCascade = cv2.CascadeClassifier(cascadePath)
+font = cv2.FONT_HERSHEY_SIMPLEX
+id = 2 
+names = ['sravani','Anil K.']  
+#cam = cv2.VideoCapture(0)
+
+flag = True
+
+app = Flask(__name__)
+
+@app.route("/generate_frames")
+def generate_frames():
+    cam = cv2.VideoCapture(0)
+    cam.set(3, 640) 
+    cam.set(4, 480) 
+    minW = 0.1*cam.get(3)
+    minH = 0.1*cam.get(4)
+    while flag:
+        ret, img =cam.read()
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale( 
+            gray,
+            scaleFactor = 1.2,
+            minNeighbors = 5,
+            minSize = (int(minW), int(minH)),
+        )
+        for(x,y,w,h) in faces:
+            cv2.rectangle(img, (x,y), (x+w,y+h), (255,255,0), 2)
+            id, confidence = recognizer.predict(gray[y:y+h,x:x+w])
+            print(id)
+            if (confidence < 60):
+                #id = names[id]
+                confidence = "  {0}%".format(round(100-confidence))
+                print("door unlocked")
+            else:
+                id = "unknown"
+                confidence = "  {0}%".format(round(100-confidence))
+                if __name__ == "__main__":
+                    notification.notify(
+                        title= "Unidentified person",
+                        message="Someone unidentified is at your door",
+                        app_icon= "icon.ico",
+                        timeout=5   )
+            cv2.putText(img, str(id), (x+5,y-5), font, 1, (255,255,255), 2)
+            cv2.putText(img, str(confidence), (x+5,y+h-5), font, 1, (2,255,0), 1)  
+        cv2.imshow('camera',img) 
+        k = cv2.waitKey(10) & 0xff # Press 'ESC' for exiting video
+        if k == 27:
+            break
+    print("\n [INFO] Exiting Program and cleanup stuff")
+
+#
+@app.route("/")
+def login():
+    return render_template("login.html")
+
+#post means request from web to server
+@app.route("/authenticate", methods=["POST"])
+def authenticate():
+    name = request.form["username"]
+    password = request.form["password"]
+    # Authenticate the user based on their credentials
+    if name == "sravani" and password == "sravani":
+        return render_template("mainpage/mainpage.html")
+        #return render_template("video_feed.html")
+    else:
+        #401= http code for unauthorised(there is mistake at browser) , 200=success 501=there is mistake at server
+        return "Unauthorized", 401
+
+@app.route("/video_feed")
+def video_feed():
+    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+
+@app.route("/registerpage")
+def register_page():
+    return render_template("register.html")    
+
+
+@app.route("/register", methods=["POST"])
+def register_new_face():
+    cam = cv2.VideoCapture(0)
+    cam.set(3, 640)
+    cam.set(4, 480) 
+
+    face_detector = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+
+    face_id = request.form["name"]
+
+    print("\n [INFO] Initializing face capture. Look the camera and wait ...")
+    path2="C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/dataset"
+    #path3=path2+'/'+face_id
+    #if not os.path.isdir(path3):
+    #   os.makedirs(path3)
+
+    count = 0
+
+    while(True):
+
+        ret, img = cam.read()
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = face_detector.detectMultiScale(gray, 1.3, 5)
+
+        for (x,y,w,h) in faces:
+
+            cv2.rectangle(img, (x,y), (x+w,y+h), (255,0,0), 2)
+            count += 1
+            name="dataset."+str(face_id) + '.' + str(count) + ".jpg"
+
+            cv2.imwrite(os.path.join(path2, name), gray[y:y+h,x:x+w])
+            cv2.imshow('image', img)
+
+        k = cv2.waitKey(100) & 0xff # Press 'ESC' for exiting video
+        if k == 27:
+            break
+        elif count >= 200:
+            break
+
+    print("\n Registering completed for new face")
+    #cam.release()
+    return render_template("training.html")    
+
+
+
+@app.route("/train", methods=["GET"])
+def getImagesAndLabels():
+    path = 'C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/dataset'
+    #path1=path+'/'+face_id
+
+    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+
+    imagePaths = [os.path.join(path,f) for f in os.listdir(path)]     
+    faceSamples=[]
+    ids = []
+
+    for imagePath in imagePaths:
+
+        PIL_img = Image.open(imagePath).convert('L') # convert it to grayscale
+        img_numpy = np.array(PIL_img,'uint8')
+
+        id = int(os.path.split(imagePath)[-1].split(".")[1])
+        faces = detector.detectMultiScale(img_numpy)
+
+        for (x,y,w,h) in faces:
+            faceSamples.append(img_numpy[y:y+h,x:x+w])
+            ids.append(id)
+
+    
+
+    print ("\n [INFO] Training faces. It will take a few seconds. Wait ...")
+    faces,ids = faceSamples, ids
+    recognizer.train(faces, np.array(ids))
+
+    recognizer.update(faces, np.array(ids))
+    recognizer.write('C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/trainer.yml') 
+
+    print("\n [INFO] {0} faces trained. Exiting Program".format(len(np.unique(ids))))
+
+    return render_template("login.html");    
+
+
+#cam.release()
+#cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    app.run(debug=True)
+
+
+
+***********************************************************************************************************************************************************
+
+Face Dataset code:
+
+
+import cv2
+import os
+
+cam = cv2.VideoCapture(0)
+cam.set(3, 640)
+cam.set(4, 480) 
+
+face_detector = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+
+face_id = input('\n enter user id end press <return> ==>  ')
+
+print("\n [INFO] Initializing face capture. Look the camera and wait ...")
+path2="C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/dataset"
+#path3=path2+'/'+face_id
+#if not os.path.isdir(path3):
+ #   os.makedirs(path3)
+
+count = 0
+
+while(True):
+
+    ret, img = cam.read()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    faces = face_detector.detectMultiScale(gray, 1.3, 5)
+
+    for (x,y,w,h) in faces:
+
+        cv2.rectangle(img, (x,y), (x+w,y+h), (255,0,0), 2)
+        count += 1
+        name="dataset."+str(face_id) + '.' + str(count) + ".jpg"
+
+        cv2.imwrite(os.path.join(path2, name), gray[y:y+h,x:x+w])
+        cv2.imshow('image', img)
+
+    k = cv2.waitKey(100) & 0xff # Press 'ESC' for exiting video
+    if k == 27:
+        break
+    elif count >= 200:
+         break
+
+print("\n [INFO] Exiting Program and cleanup stuff")
+cam.release()
+cv2.destroyAllWindows()
+
+
+
+
+
+
+**********************************************************************************************************************************************************
+
+Face training code:
+
+
+import cv2
+import numpy as np
+from PIL import Image 
+import os
+
+face_id = input('\n enter user id end press <return> ==>  ')
+path = 'C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/dataset'
+#path1=path+'/'+face_id
+
+
+recognizer = cv2.face.LBPHFaceRecognizer_create()
+detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+
+def getImagesAndLabels(path):
+
+    imagePaths = [os.path.join(path,f) for f in os.listdir(path)]     
+    faceSamples=[]
+    ids = []
+
+    for imagePath in imagePaths:
+
+        PIL_img = Image.open(imagePath).convert('L') # convert it to grayscale
+        img_numpy = np.array(PIL_img,'uint8')
+
+        id = int(os.path.split(imagePath)[-1].split(".")[1])
+        faces = detector.detectMultiScale(img_numpy)
+
+        for (x,y,w,h) in faces:
+            faceSamples.append(img_numpy[y:y+h,x:x+w])
+            ids.append(id)
+
+    return faceSamples,ids
+
+print ("\n [INFO] Training faces. It will take a few seconds. Wait ...")
+faces,ids = getImagesAndLabels(path)
+recognizer.train(faces, np.array(ids))
+
+recognizer.update(faces, np.array(ids))
+recognizer.write('C:/Users/laksm/Desktop/SRAVANI TOTAL/ai_project/Smart-home-using-face-recognixation-main/trainer.yml') 
+
+print("\n [INFO] {0} faces trained. Exiting Program".format(len(np.unique(ids))))
+
+
+
+***********************************************************************************************************************************************************
+
+register.html code:
+
+
+<!DOCTYPE html>
+<html>
+<style>
+    .form{
+        margin-top: 30vh;
+        margin-left: 20px;
+            }
+    .form input{
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 30px;
+        padding-left: 15px;
+        width: 272px;
+        height: 37px;
+        border-style: none;
+        border-radius: 15px;
+        font-size: 16px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        font-style: normal;
+        line-height: 28px;
+        color: #2e2e2e;
+        box-shadow: 0px 0px 7px 6px rgba(199, 199, 199, 0.31);
+        outline: none;
+            }
+    #button{
+        color: white !important;
+        align-items: center;
+        justify-content: center;
+        background-color: #4CAF50;
+    border: none;
+    outline: none;
+    border-radius: 15px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    }
+    #button:hover{
+        background-color: #0fca15;
+    }
+
+</style>
+<head>
+    <meta charset="UTF-8">
+    <title>Register a new face</title>
+</head>
+<body>
+    <h1>Register</h1>
+    <form class="form" action="/register" method="POST">
+        <div class="form">
+        <label for="name">Name:</label>
+        <input type="text" id="name" name="name" placeholder="enter your name" required><br><br>
+        <input type="submit" value="Register" id="button">
+        </div>
+    </form>
+</body>
+</html>
+
+
+
+
+**************************************************************************************************************************************************
+
+mainpage.css code:
+
+*{
+    padding: 0;
+    margin: 0;
+    transition: all 0.1s cubic-bezier(1, 0, 0, 1);
+}
+.backpart{
+    width: 100%;
+    height: 100vh;
+    background-image: linear-gradient(to right, rgb(230, 230, 230) 50%, rgb(255, 255, 255) 50%);
+    position: relative;
+}
+.videopart{
+    width: 58%;
+    height: 90vh;
+    background-color: rgb(206, 206, 206);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0px 0px 7px 6px rgba(107, 107, 107, 0.31);
+    overflow: hidden;
+}
+.liveVideo{
+    width: 100%;
+    height: 67vh;
+}
+.live1{
+    position: absolute;
+    width: 70px;
+    height: 30px;
+    top: 8%;
+    left: 23%;
+    z-index: 4;
+    background-color: rgba(37, 37, 37, 0.31);
+    border-radius: 15px;
+    
+}
+.letter{
+    position: absolute;
+    top: 3px;
+    left: 26px;
+    font-size: 16px;
+    font-weight: bold;
+    color: red;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+.live{
+    position: absolute;
+    top: 10px;
+    left: 8px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: red;
+    animation: live 0.8s linear infinite;
+    /* z-index: 4; */
+    
+}
+.alert{
+    z-index: 10;
+    position: absolute;
+    width: 100px;
+    height: 40px;
+    background-color: orangered;
+    border-style: none;
+    border-radius: 5px;
+    color: white;
+    margin: 20px;
+    cursor: pointer;
+    font-size: larger;
+}
+.alert:hover{
+    background-color: red;
+}
+
+@keyframes live{
+    0%{opacity: 0;}
+    50%{opacity: 1;}
+    100%{opacity: 1;}
+    }
+
+
+
+
+***********************************************************************************************************************************************************
+
+mainpage.html code:
+
+<!DOCTYPE html>
+<html lang="en">
+<style>
+    *{
+    padding: 0;
+    margin: 0;
+    transition: all 0.1s cubic-bezier(1, 0, 0, 1);
+}
+.backpart{
+    width: 100%;
+    height: 100vh;
+    background-image: linear-gradient(to right, rgb(230, 230, 230) 50%, rgb(255, 255, 255) 50%);
+    position: relative;
+}
+.videopart{
+    width: 58%;
+    height: 90vh;
+    background-color: rgb(206, 206, 206);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0px 0px 7px 6px rgba(107, 107, 107, 0.31);
+    overflow: hidden;
+}
+.liveVideo{
+    width: 100%;
+    height: 67vh;
+}
+.live1{
+    position: absolute;
+    width: 70px;
+    height: 30px;
+    top: 8%;
+    left: 23%;
+    z-index: 4;
+    background-color: rgba(37, 37, 37, 0.31);
+    border-radius: 15px;
+    
+}
+.letter{
+    position: absolute;
+    top: 3px;
+    left: 26px;
+    font-size: 16px;
+    font-weight: bold;
+    color: red;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+.live{
+    position: absolute;
+    top: 10px;
+    left: 8px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: red;
+    animation: live 0.8s linear infinite;
+    /* z-index: 4; */
+    
+}
+.alert{
+    z-index: 10;
+    position: absolute;
+    width: 100px;
+    height: 40px;
+    background-color: orangered;
+    border-style: none;
+    border-radius: 5px;
+    color: white;
+    margin: 20px;
+    cursor: pointer;
+    font-size: larger;
+}
+.alert:hover{
+    background-color: red;
+}
+
+@keyframes live{
+    0%{opacity: 0;}
+    50%{opacity: 1;}
+    100%{opacity: 1;}
+    }
+</style>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="mainpage.css">
+    <title>Smart home</title>
+</head>
+<body>
+    <!--<a href="http://127.0.0.1/"><button class="alert">Alert</button></a>-->
+    <div class="live1">
+        <div class="live"></div>
+        <div class="letter">Live</div>
+    </div>
+    <div class="backpart">
+        <div class="videopart">
+            <img src="http://localhost:5000/video_feed">
+        </div>
+    </div>
+    
+</body>
+<!--
+<script>
+    const video = document.getElementById("video");
+
+function startVideo(){
+    console.log('video stream started');
+    var any = navigator.getUserMedia(
+        { video: {} },
+        stream => video.srcObject = stream,
+        err => console.error(err)
+    );
+    console.log(video);
+}
+
+startVideo()
+</script>
+-->
+</html>
+
+
+
+***********************************************************************************************************************************************************
+
+login.html code:
+
+
+<!DOCTYPE html>
+<html lang="en">
+    <style>
+            *{
+                padding: 0;
+                margin: 0;
+            } 
+            body{
+                position: relative;
+                overflow: hidden;
+            }
+            .main{
+                margin-left: 10%;
+            }
+            div h1{
+                font-size: 26px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+                margin-left: 20px;
+            }
+            .top{
+            display: flex;
+            justify-content: space-between;
+            
+            }
+            .top i{
+                padding-top: 12px;
+                font-size: 22px;
+                margin-right: 20px;
+            }
+            .form{
+                margin-top: 30vh;
+                margin-left: 20px;
+            }
+            .form1{
+                margin-top: 5vh;
+                margin-left: 20px;
+            }
+            .form input{
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                margin-bottom: 30px;
+                padding-left: 15px;
+                width: 272px;
+                height: 37px;
+                border-style: none;
+                border-radius: 15px;
+                font-size: 16px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+                font-style: normal;
+                line-height: 28px;
+                color: #2e2e2e;
+                box-shadow: 0px 0px 7px 6px rgba(199, 199, 199, 0.31);
+                outline: none;
+            }
+            .form1 input{
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                margin-bottom: 30px;
+                padding-left: 15px;
+                width: 272px;
+                height: 37px;
+                border-style: none;
+                border-radius: 15px;
+                font-size: 16px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+                font-style: normal;
+                line-height: 28px;
+                color: #2e2e2e;
+                box-shadow: 0px 0px 7px 6px rgba(199, 199, 199, 0.31);
+                outline: none;
+            }
+            #error1{
+                position: absolute;
+                margin-top: -20px;
+                padding-left: 15px;
+                color: rgb(240, 53, 21);
+                visibility: hidden;
+            }
+            small .sho{
+                position: absolute;
+                margin-top: -20px;
+                padding-left: 15px;
+                color: rgb(240, 53, 21);
+                visibility: visible !important;
+            }
+            div i{
+                cursor: pointer;
+            }
+            #button{
+                color: white !important;
+                align-items: center;
+                justify-content: center;
+                background-color: #4CAF50;
+            border: none;
+            outline: none;
+            border-radius: 15px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            }
+            #register{
+                color: white !important;
+                align-items: center;
+                justify-content: center;
+                background-color: #4CAF50;
+            border: none;
+            outline: none;
+            border-radius: 15px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            }
+            #button:hover{
+                background-color: #0fca15;
+            }
+            #register:hover{
+                background-color: #0fca15;
+            }
+            /* .form.error small{
+                visibility: visible;
+            } */
+            /* --------------sidebar css------------- */
+            .side{
+                width: 250px;
+                height: 100vh;
+                position: absolute;
+                top: 0vh;
+                right: 0;
+                z-index: 2;
+                background-color: #32b436;
+                right: -250px;
+                transition: 0.3s;
+            }
+            .side i{
+                position: absolute;
+                font-size: 22px;
+                padding-top: 12px;
+                right: 20px;
+                color: rgb(255, 255, 255);
+                
+            }
+            .more{
+                list-style: none;
+                position: absolute;
+                left: 30px;
+                font-size: 20px;
+                top: 30vh;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+                color: rgb(131, 131, 131);
+            }
+            .more a{
+                padding-bottom: 5px;
+                text-decoration: none;
+                display: block;
+                color: rgb(255, 255, 255);
+                font-weight: bold;
+            }
+            .more a:hover{
+                color: rgb(73, 73, 73);
+            }
+            /* --------dark background ---------*/
+            .dimbg{
+                position: absolute;
+                z-index: 1;
+                top: 0;
+                width: 100%;
+                height: 100vh;
+                background: rgba(191, 189, 189, 0.5);
+                left: 100%;
+            }
+
+    </style>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>   
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" type="text/css" href="/login.css">
+    <title>Smart Home</title>
+</head>
+<body>
+    <div class="main">
+    <div class="top">
+        <div><h1>IOT BASED SMART HOME USING FACE RECOGNIZATION</h1></div>
+        <div ><i onclick="openFunction()" class="fa fa-bars"></i></div>
+    </div>
+    <form class="form1" id="form1" name="MyForm" action="/authenticate" method="POST" autocomplete="off">
+    <div class="form">
+        <input type="text" alt="User Name" placeholder="User ID" id="username" name="username" required>
+        <input type="password" alt="User Name" placeholder="Password" id="password" name="password" required>
+        <small id="error1">User name or Password not valid</small> <br>
+        <!-- <a id="next"><input type="button" id="button" value="Login"></a> -->
+        <input type="submit" id="button" value="Login">
+        
+    </div>
+    </form>
+    <form class="form1" id="form2" name="registerForm" action="/registerpage" method="GET" autocomplete="off">
+        <div class="form1">
+        <input type="submit" id="register" value="Register" />
+        </div>
+    </form>
+</div>
+<div class="side" id="lol">
+    <i onclick="closeFunction()" class="fa fa-bars" id="lol1"></i>
+    <div class="more">
+        <a href="#">Team</a>
+        <a href="#">How to use</a>
+        <a href="#">Documentation</a>
+        <a href="#">Contact</a>       
+    </div>
+</div>
+<div class="dimbg" id="bgdark" onclick="disMis()">
+
+</div>
+</body>
+<script type="text/javascript">
+    function openFunction(){
+        document.getElementById("lol").style.right = "0px";
+        document.getElementById("bgdark").style.left = "0px";
+    }
+    function closeFunction(){
+        document.getElementById("lol").style.right = "-250px";
+        document.getElementById("bgdark").style.left = "100%";
+    }
+    function disMis(){
+        document.getElementById("lol").style.right = "-250px";
+        document.getElementById("bgdark").style.left = "100%";
+    }
+
+    $(document).ready(function(){
+    $('#button').click(function(){
+        var userName=$('#username').val();
+        var passWord=$('#password').val();
+       if(userName=="admin" && passWord=="admin"){
+            // $('#next').attr('href', 'mainpage/mainpage.html');
+            //window.location.href= "mainpage/mainpage.html";
+            window.location.href= "video_feed.html";
+        }
+        else{
+            $("#error1").css("visibility", "visible")
+        }
+
+     });
+});
+
+
+</script>
+</html>
+
+
+
+***********************************************************************************************************************************************************
+
+training.html code:
+
+
+<!DOCTYPE html>
+<html>
+<style>
+    .form{
+        margin-top: 30vh;
+        margin-left: 20px;
+            }
+    .form input{
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 30px;
+        padding-left: 15px;
+        width: 272px;
+        height: 37px;
+        border-style: none;
+        border-radius: 15px;
+        font-size: 16px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        font-style: normal;
+        line-height: 28px;
+        color: #2e2e2e;
+        box-shadow: 0px 0px 7px 6px rgba(199, 199, 199, 0.31);
+        outline: none;
+            }
+    #button{
+        color: white !important;
+        align-items: center;
+        justify-content: center;
+        background-color: #4CAF50;
+    border: none;
+    outline: none;
+    border-radius: 15px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    }
+    #button:hover{
+        background-color: #0fca15;
+    }
+
+</style>    
+<head>
+    <meta charset="UTF-8">
+    <title>Train the new face</title>
+</head>
+<body>
+    <h1>Train new face</h1>
+    <form action="/train" method="GET">
+        <div class="form">
+        <input type="submit" value="Train" id="button">
+        </div>
+    </form>
+</body>
+</html>
+
+
+
+***********************************************************************************************************************************************************
+
+video_feed.html code:
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Video Feed</title>
+</head>
+<body>
+    <h1>Video Feed</h1>
+    <img src="http://localhost:5000/video_feed">
+</body>
+</html>
+
+
+
+***********************************************************************************************************************************************************
+
+loginSuccess.html code:
+
+
+you are recognized.
+
+
+<br/><br/><br/><br/>
+
+<a href="/login.html" >Click here for login page</a>
+
+
+***********************************************************************************************************************************************************
+
+
+
+Along with this we have a alert icon file.
+
+
+In trainer.yml file The converted data of all captured images will be stored.
+
+
+
+
